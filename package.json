@@ -6,8 +6,17 @@
   "scripts": {
     "dev": "concurrently -k -n \"api,app\" -c \"magenta,cyan\" \"tsx server/index.ts\" \"vite\"",
     "dev:frontend": "vite",
+    "dev:worker": "wrangler dev",
     "server": "tsx server/index.ts",
     "build": "tsc -b && vite build",
+    "build:worker": "wrangler deploy --dry-run",
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply personal_universe_db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply personal_universe_db --remote",
+    "db:seed": "node scripts/generate-seed.cjs",
+    "r2:migrate:local": "node scripts/migrate-media-to-r2.cjs --local",
+    "r2:migrate:remote": "node scripts/migrate-media-to-r2.cjs --remote",
+    "test:worker": "node scripts/test-cloudflare-worker.cjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "start": "tsx server/index.ts"
@@ -19,6 +28,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "framer-motion": "^14.12.0",
+    "hono": "^4.13.18",
     "lucide-react": "^1.71.0",
     "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.4",
@@ -27,6 +37,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261114.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
@@ -43,6 +54,7 @@
     "tailwindcss": "^3.4.19",
     "tsx": "^4.19.3",
     "typescript": "~7.0.2",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "wrangler": "^4.162.0"
   }
 }

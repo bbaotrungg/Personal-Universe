@@ -23,6 +23,7 @@ dist-ssr
 # Local server database & draft/published data
 server/data/*
 !server/data/.gitkeep
+migrations/*seed*.sql
 
 # Uploads & Media
 uploads/*
