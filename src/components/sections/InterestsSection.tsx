@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { Headphones, Coffee, Gamepad2, Camera, Code2, BookOpen, Plus, Pencil } from 'lucide-react';
+import { Headphones, Coffee, Gamepad2, Camera, Code2, BookOpen, Dumbbell, Sparkles, Plus, Pencil } from 'lucide-react';
 import type { InterestItem } from '../../types';
 
 interface InterestsSectionProps {
@@ -23,6 +23,9 @@ export const InterestsSection: FC<InterestsSectionProps> = ({
       case 'Camera': return <Camera size={20} className="text-sage" />;
       case 'Code2': return <Code2 size={20} className="text-clay" />;
       case 'BookOpen': return <BookOpen size={20} className="text-sage" />;
+      case 'Dumbbell':
+      case 'Dumbell': return <Dumbbell size={20} className="text-solar-dark" />;
+      case 'Sparkles': return <Sparkles size={20} className="text-solar-dark" />;
       default: return <Coffee size={20} className="text-clay" />;
     }
   };

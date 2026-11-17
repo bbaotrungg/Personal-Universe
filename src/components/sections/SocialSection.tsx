@@ -6,6 +6,7 @@ import {
   GithubIcon,
   SpotifyIcon,
   DiscordIcon,
+  TiktokIcon,
 } from '../common/BrandIcons';
 import type { SocialLink } from '../../types';
 
@@ -39,6 +40,10 @@ export const SocialSection: FC<SocialSectionProps> = ({
     switch (name) {
       case 'Facebook': return <FacebookIcon size={size} />;
       case 'Instagram': return <InstagramIcon size={size} />;
+      case 'TikTok':
+      case 'Tiktok':
+      case 'Video':
+        return <TiktokIcon size={size} />;
       case 'Spotify': return <SpotifyIcon size={size} />;
       case 'Github': return <GithubIcon size={size} />;
       case 'Discord': return <DiscordIcon size={size} />;

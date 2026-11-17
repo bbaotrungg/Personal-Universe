@@ -17,7 +17,7 @@ const PLATFORMS: Array<{ name: string; icon: string; defaultColor: string }> = [
   { name: 'Spotify', icon: 'Spotify', defaultColor: '#1DB954' },
   { name: 'LinkedIn', icon: 'Linkedin', defaultColor: '#0A66C2' },
   { name: 'Telegram', icon: 'Send', defaultColor: '#26A5E4' },
-  { name: 'TikTok', icon: 'Video', defaultColor: '#000000' },
+  { name: 'TikTok', icon: 'TikTok', defaultColor: '#000000' },
   { name: 'Zalo / Phone', icon: 'MessageCircle', defaultColor: '#0068FF' },
   { name: 'Email', icon: 'Mail', defaultColor: '#EA4335' },
 ];

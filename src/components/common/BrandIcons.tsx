@@ -44,3 +44,11 @@ export const DiscordIcon: FC<{ size?: number; className?: string }> = ({ size = 
     <circle cx="15" cy="12" r="1.5"/>
   </svg>
 );
+
+export const TiktokIcon: FC<{ size?: number; className?: string }> = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M21 7.917v4.034a9.948 9.948 0 0 1-5-1.951v4.5a6.5 6.5 0 1 1-8-6.326v4.326a2.5 2.5 0 1 0 4 2v-11.5h4.083a6.002 6.002 0 0 0 4.917 4.917z" />
+  </svg>
+);
+
+export { TiktokIcon as TikTokIcon };

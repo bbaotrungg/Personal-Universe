@@ -1,5 +1,16 @@
 import { useState, useEffect, type FC, type FormEvent } from 'react';
-import { X, Sparkles, Trash2 } from 'lucide-react';
+import {
+  X,
+  Sparkles,
+  Trash2,
+  Dumbbell,
+  Headphones,
+  Coffee,
+  Gamepad2,
+  Camera,
+  Code2,
+  BookOpen,
+} from 'lucide-react';
 import type { InterestItem } from '../../../types';
 
 interface EditInterestModalProps {
@@ -15,6 +26,17 @@ const COLOR_OPTIONS: Array<{ value: InterestItem['color']; label: string; bg: st
   { value: 'sage', label: 'Xanh Sage', bg: 'bg-sage text-white' },
   { value: 'solar', label: 'Vàng Nắng (Solar)', bg: 'bg-solar text-ink' },
   { value: 'periwinkle', label: 'Tím Xanh (Periwinkle)', bg: 'bg-periwinkle text-white' },
+];
+
+const ICON_OPTIONS: Array<{ value: string; label: string; icon: FC<{ size?: number; className?: string }> }> = [
+  { value: 'Dumbbell', label: 'Tập gym / Thể dục', icon: Dumbbell },
+  { value: 'Headphones', label: 'Nghe nhạc', icon: Headphones },
+  { value: 'Coffee', label: 'Cà phê', icon: Coffee },
+  { value: 'Gamepad2', label: 'Chơi game', icon: Gamepad2 },
+  { value: 'Camera', label: 'Nhiếp ảnh', icon: Camera },
+  { value: 'Code2', label: 'Lập trình', icon: Code2 },
+  { value: 'BookOpen', label: 'Đọc sách', icon: BookOpen },
+  { value: 'Sparkles', label: 'Khác (Lấp lánh)', icon: Sparkles },
 ];
 
 export const EditInterestModal: FC<EditInterestModalProps> = ({
@@ -160,6 +182,33 @@ export const EditInterestModal: FC<EditInterestModalProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-mono text-ink-subtle dark:text-gray-400 mb-1.5">
+              BIỂU TƯỢNG (ICON)
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {ICON_OPTIONS.map((item) => {
+                const IconComponent = item.icon;
+                const isSelected = formData.iconName === item.value;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setFormData({ ...formData, iconName: item.value })}
+                    className={`inline-flex items-center gap-1.5 p-2 rounded-xl border text-xs transition-all ${
+                      isSelected
+                        ? 'bg-clay text-white border-clay font-medium shadow-sm'
+                        : 'bg-white dark:bg-stone-800 text-ink dark:text-gray-300 border-ink-border/70 dark:border-stone-700 hover:border-clay'
+                    }`}
+                  >
+                    <IconComponent size={15} />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
