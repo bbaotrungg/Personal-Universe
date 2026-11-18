@@ -39,6 +39,8 @@ shots/
 .mf/
 backup*.sql
 *.sql.bak
+.cloudinary-migration-map.json
+*.tmp.sql
 
 # Editor directories and files
 .vscode/*
