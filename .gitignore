@@ -37,6 +37,8 @@ shots/
 # Cloudflare / Wrangler local cache
 .wrangler/
 .mf/
+backup*.sql
+*.sql.bak
 
 # Editor directories and files
 .vscode/*

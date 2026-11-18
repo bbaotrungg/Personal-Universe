@@ -127,7 +127,7 @@ export const PersonalitySection: FC<PersonalitySectionProps> = ({
       <div className="p-5 sm:p-6 rounded-3xl bg-solar-light/70 dark:bg-stone-800/80 border border-solar/40 dark:border-stone-700 shadow-soft">
         <div className="flex items-center gap-2 mb-3 text-solar-dark dark:text-amber-300 font-serif font-bold text-base">
           <Sparkles size={18} />
-          <span>Vài Sự Thật Ngẫu Nhiên (Vớ Vẩn thoi)</span>
+          <span>Vài Sự Thật Ngẫu Nhiên (Vớ vẩn thoi)</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {data.randomFacts.map((fact, idx) => (

@@ -13,14 +13,8 @@
     {
       "binding": "DB",
       "database_name": "personal_universe_db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "f9507523-8282-41ef-a1f3-263d3c3a5eac",
       "migrations_dir": "migrations"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "MEDIA_BUCKET",
-      "bucket_name": "personal-universe-media"
     }
   ],
   "observability": {

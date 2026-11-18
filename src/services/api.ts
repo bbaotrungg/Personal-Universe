@@ -160,12 +160,73 @@ export async function logoutOwner(token: string): Promise<void> {
 }
 
 /**
- * Tải ảnh lên máy chủ (avatar, memory, favorite cover,...)
+ * Tải ảnh lên Cloudinary qua chữ ký Worker (hoặc fallback server)
  */
 export async function uploadImage(
   token: string,
   file: File
 ): Promise<{ success: boolean; url: string; filename: string }> {
+  try {
+    // 1. Thử xin chữ ký upload trực tiếp lên Cloudinary từ Worker
+    const signRes = await fetch(`${API_BASE}/upload/sign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ resourceType: 'image' }),
+    });
+
+    if (signRes.ok) {
+      const signData = await signRes.json();
+      if (signData.success && signData.cloudName && signData.signature) {
+        const cloudForm = new FormData();
+        cloudForm.append('file', file);
+        cloudForm.append('api_key', signData.apiKey);
+        cloudForm.append('timestamp', String(signData.timestamp));
+        cloudForm.append('signature', signData.signature);
+        cloudForm.append('folder', signData.folder);
+        cloudForm.append('public_id', signData.publicId);
+
+        const cloudRes = await fetch(
+          `https://api.cloudinary.com/v1_1/${signData.cloudName}/image/upload`,
+          {
+            method: 'POST',
+            body: cloudForm,
+          }
+        );
+
+        if (cloudRes.ok) {
+          const cloudData = await cloudRes.json();
+          // Thông báo cho Worker lưu metadata vào D1
+          fetch(`${API_BASE}/upload/complete`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              publicId: cloudData.public_id,
+              secureUrl: cloudData.secure_url,
+              size: cloudData.bytes || file.size,
+              contentType: file.type,
+              resourceType: 'image',
+            }),
+          }).catch((err) => console.warn('Lỗi ghi nhận metadata D1:', err));
+
+          return {
+            success: true,
+            url: cloudData.secure_url,
+            filename: cloudData.public_id,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Direct Cloudinary upload unavailable, falling back:', err);
+  }
+
+  // 2. Fallback sang server upload (Express local dev và Worker-mediated)
   const formData = new FormData();
   formData.append('image', file);
 
@@ -186,12 +247,76 @@ export async function uploadImage(
 }
 
 /**
- * Tải file nhạc MP3 lên máy chủ làm nhạc nền
+ * Tải file nhạc MP3 lên Cloudinary qua chữ ký Worker (hoặc fallback server)
  */
 export async function uploadAudio(
   token: string,
   file: File
 ): Promise<{ success: boolean; url: string; filename: string; originalName?: string }> {
+  try {
+    // 1. Thử xin chữ ký upload trực tiếp lên Cloudinary từ Worker (resource_type: video)
+    const signRes = await fetch(`${API_BASE}/upload/sign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ resourceType: 'video' }),
+    });
+
+    if (signRes.ok) {
+      const signData = await signRes.json();
+      if (signData.success && signData.cloudName && signData.signature) {
+        const cloudForm = new FormData();
+        cloudForm.append('file', file);
+        cloudForm.append('api_key', signData.apiKey);
+        cloudForm.append('timestamp', String(signData.timestamp));
+        cloudForm.append('signature', signData.signature);
+        cloudForm.append('folder', signData.folder);
+        cloudForm.append('public_id', signData.publicId);
+
+        // Chú ý: Cloudinary yêu cầu resource_type là 'video' cho file âm thanh MP3
+        const cloudRes = await fetch(
+          `https://api.cloudinary.com/v1_1/${signData.cloudName}/video/upload`,
+          {
+            method: 'POST',
+            body: cloudForm,
+          }
+        );
+
+        if (cloudRes.ok) {
+          const cloudData = await cloudRes.json();
+          // Lưu metadata vào D1
+          fetch(`${API_BASE}/upload/complete`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              publicId: cloudData.public_id,
+              secureUrl: cloudData.secure_url,
+              size: cloudData.bytes || file.size,
+              contentType: file.type || 'audio/mpeg',
+              resourceType: 'video',
+              originalFilename: file.name,
+            }),
+          }).catch((err) => console.warn('Lỗi ghi nhận metadata D1:', err));
+
+          return {
+            success: true,
+            url: cloudData.secure_url,
+            filename: cloudData.public_id,
+            originalName: file.name,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Direct Cloudinary audio upload unavailable, falling back:', err);
+  }
+
+  // 2. Fallback sang server upload
   const formData = new FormData();
   formData.append('audio', file);
 

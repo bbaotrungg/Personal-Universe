@@ -12,9 +12,11 @@ import { socialLinksData } from '../src/data/social';
 
 export interface Env {
   DB: D1Database;
-  MEDIA_BUCKET: R2Bucket;
   ASSETS?: Fetcher;
   OWNER_ACCESS_CODE?: string;
+  CLOUDINARY_CLOUD_NAME?: string;
+  CLOUDINARY_API_KEY?: string;
+  CLOUDINARY_API_SECRET?: string;
 }
 
 const defaultContent: UniverseContent = {
@@ -28,7 +30,10 @@ const defaultContent: UniverseContent = {
   lastPublishedAt: new Date().toISOString(),
 };
 
-// Cryptographic helpers
+/* ==========================================================================
+   CRYPTOGRAPHIC & CLOUDINARY SIGNING HELPERS
+   ========================================================================== */
+
 async function timingSafeEqualString(a: string, b: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const aBuf = encoder.encode(a.trim());
@@ -73,6 +78,24 @@ function generateRandomHex(length = 8): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Tạo chữ ký Cloudinary SHA-1 theo chuẩn API:
+ * Sắp xếp các tham số theo thứ tự bảng chữ cái A-Z, nối dạng key=val&key2=val2 và gắn api_secret ở cuối
+ */
+async function generateCloudinarySignature(
+  params: Record<string, string | number>,
+  apiSecret: string
+): Promise<string> {
+  const sortedKeys = Object.keys(params).sort();
+  const toSign = sortedKeys.map((k) => `${k}=${params[k]}`).join('&') + apiSecret;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(toSign);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
@@ -132,7 +155,7 @@ async function getAuthenticatedSession(
 
   const now = Date.now();
   if (now > row.expires_at) {
-    // Clean up expired session
+    // Tự động dọn dẹp phiên hết hạn
     await db.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(tokenHashed).run();
     return { valid: false };
   }
@@ -141,7 +164,7 @@ async function getAuthenticatedSession(
 }
 
 /* ==========================================================================
-   PUBLIC MEDIA STREAMING (R2 Storage with Range request support for audio)
+   LEGACY MEDIA REDIRECT (Chuyển tiếp /uploads/:filename sang Cloudinary URL)
    ========================================================================== */
 app.get('/uploads/:filename', async (c) => {
   const filename = c.req.param('filename');
@@ -149,65 +172,21 @@ app.get('/uploads/:filename', async (c) => {
     return c.text('Tệp không hợp lệ', 400);
   }
 
-  const rangeHeader = c.req.header('range');
-  let object: R2Object | R2ObjectBody | null = null;
+  try {
+    const record = await c.env.DB.prepare(
+      'SELECT cloudinary_url FROM media_records WHERE filename = ? OR id = ?'
+    )
+      .bind(filename, filename)
+      .first<{ cloudinary_url: string }>();
 
-  if (rangeHeader) {
-    // Parse Range header for streaming audio
-    const match = rangeHeader.match(/bytes=(\d+)-(\d+)?/);
-    if (match) {
-      const offset = parseInt(match[1], 10);
-      const end = match[2] ? parseInt(match[2], 10) : undefined;
-      const length = end !== undefined ? end - offset + 1 : undefined;
-
-      object = await c.env.MEDIA_BUCKET.get(filename, {
-        range: { offset, length },
-      });
+    if (record && record.cloudinary_url) {
+      return c.redirect(record.cloudinary_url, 302);
     }
+  } catch (err) {
+    console.error('Error looking up media record:', err);
   }
 
-  if (!object) {
-    object = await c.env.MEDIA_BUCKET.get(filename);
-  }
-
-  if (!object) {
-    return c.text('Không tìm thấy tệp phương tiện.', 404);
-  }
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
-  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-
-  const ext = filename.split('.').pop()?.toLowerCase();
-  if (!headers.get('content-type')) {
-    if (ext === 'mp3') headers.set('content-type', 'audio/mpeg');
-    else if (ext === 'wav') headers.set('content-type', 'audio/wav');
-    else if (ext === 'ogg') headers.set('content-type', 'audio/ogg');
-    else if (ext === 'm4a') headers.set('content-type', 'audio/mp4');
-    else if (ext === 'png') headers.set('content-type', 'image/png');
-    else if (ext === 'webp') headers.set('content-type', 'image/webp');
-    else if (ext === 'jpg' || ext === 'jpeg') headers.set('content-type', 'image/jpeg');
-    else headers.set('content-type', 'application/octet-stream');
-  }
-
-  if (rangeHeader && 'range' in object && object.range) {
-    headers.set(
-      'content-range',
-      `bytes ${object.range.offset}-${object.range.offset + (object.range.length ?? object.size) - 1}/${object.size}`
-    );
-    headers.set('accept-ranges', 'bytes');
-    return new Response('body' in object ? object.body : null, {
-      status: 206,
-      headers,
-    });
-  }
-
-  headers.set('accept-ranges', 'bytes');
-  return new Response('body' in object ? object.body : null, {
-    status: 200,
-    headers,
-  });
+  return c.text('Không tìm thấy tệp phương tiện.', 404);
 });
 
 /* ==========================================================================
@@ -242,7 +221,7 @@ app.post('/api/auth/verify', async (c) => {
   const token = generateToken();
   const tokenHashed = await hashToken(token);
   const now = Date.now();
-  const expiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
+  const expiresAt = now + 24 * 60 * 60 * 1000; // 24 giờ
 
   await c.env.DB.prepare(
     'INSERT OR REPLACE INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)'
@@ -359,7 +338,6 @@ app.get('/api/content/draft', async (c) => {
     if (row && row.data) {
       draft = normalizeContent(JSON.parse(row.data));
     } else {
-      // Fallback to published if draft empty
       const pubRow = await c.env.DB.prepare(
         'SELECT data FROM content WHERE key = ?'
       )
@@ -421,7 +399,6 @@ app.post('/api/content/publish', async (c) => {
     return c.json({ success: false, message: 'Yêu cầu quyền chủ sở hữu.' }, 401);
   }
 
-  // Get current draft
   const draftRow = await c.env.DB.prepare(
     'SELECT data FROM content WHERE key = ?'
   )
@@ -436,7 +413,6 @@ app.post('/api/content/publish', async (c) => {
   const now = new Date().toISOString();
   draft.lastPublishedAt = now;
 
-  // Atomically update published and draft in D1
   const statements = [
     c.env.DB.prepare(
       'INSERT OR REPLACE INTO content (key, data, updated_at, published_at) VALUES (?, ?, ?, ?)'
@@ -456,17 +432,127 @@ app.post('/api/content/publish', async (c) => {
 });
 
 /* ==========================================================================
-   FILE MANAGEMENT ENDPOINTS (Cloudflare R2 Storage)
+   CLOUDINARY MEDIA ENDPOINTS (Cloudinary Free Storage)
    ========================================================================== */
 
 /**
- * 8. POST /api/upload
- * Tải ảnh lên Cloudflare R2 (Avatar, Polaroid, Bìa sở thích)
+ * 8. POST /api/upload/sign
+ * Cấp chữ ký upload Cloudinary trực tiếp từ trình duyệt
+ */
+app.post('/api/upload/sign', async (c) => {
+  const session = await getAuthenticatedSession(c.env.DB, c.req.header('authorization'));
+  if (!session.valid) {
+    return c.json({ success: false, message: 'Yêu cầu quyền chủ sở hữu.' }, 401);
+  }
+
+  const cloudName = c.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = c.env.CLOUDINARY_API_KEY;
+  const apiSecret = c.env.CLOUDINARY_API_SECRET;
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    return c.json(
+      {
+        success: false,
+        message: 'Cloudinary credentials chưa được cấu hình trên Worker. Vui lòng cấu hình CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.',
+      },
+      500
+    );
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const rawType = body?.resourceType || 'image';
+  const resourceType = rawType === 'video' || rawType === 'audio' ? 'video' : 'image';
+  const folder = resourceType === 'video' ? 'personal-universe/audio' : 'personal-universe/images';
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const prefix = resourceType === 'video' ? 'audio' : 'img';
+  const publicId = `${prefix}-${Date.now()}-${generateRandomHex(6)}`;
+
+  const paramsToSign: Record<string, string | number> = {
+    folder,
+    public_id: publicId,
+    timestamp,
+  };
+
+  const signature = await generateCloudinarySignature(paramsToSign, apiSecret);
+
+  return c.json({
+    success: true,
+    cloudName,
+    apiKey,
+    timestamp,
+    signature,
+    folder,
+    publicId,
+    resourceType,
+  });
+});
+
+/**
+ * 9. POST /api/upload/complete
+ * Xác nhận sau khi trình duyệt upload thành công lên Cloudinary để ghi metadata vào D1
+ */
+app.post('/api/upload/complete', async (c) => {
+  const session = await getAuthenticatedSession(c.env.DB, c.req.header('authorization'));
+  if (!session.valid) {
+    return c.json({ success: false, message: 'Yêu cầu quyền chủ sở hữu.' }, 401);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || !body.publicId || !body.secureUrl) {
+    return c.json({ success: false, message: 'Thiếu thông tin asset Cloudinary.' }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const safeFilename = body.publicId.split('/').pop() || body.publicId;
+
+  await c.env.DB.prepare(
+    `INSERT OR REPLACE INTO media_records 
+     (id, filename, content_type, size, uploaded_at, cloudinary_public_id, cloudinary_url, resource_type) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      safeFilename,
+      safeFilename,
+      body.contentType || (body.resourceType === 'video' ? 'audio/mpeg' : 'image/jpeg'),
+      body.size || 0,
+      now,
+      body.publicId,
+      body.secureUrl,
+      body.resourceType || 'image'
+    )
+    .run();
+
+  return c.json({
+    success: true,
+    url: body.secureUrl,
+    filename: body.publicId,
+    message: 'Ghi nhận tệp thành công!',
+  });
+});
+
+/**
+ * 10. POST /api/upload
+ * Worker-mediated fallback cho tải ảnh lên Cloudinary
  */
 app.post('/api/upload', async (c) => {
   const session = await getAuthenticatedSession(c.env.DB, c.req.header('authorization'));
   if (!session.valid) {
     return c.json({ success: false, message: 'Yêu cầu quyền chủ sở hữu.' }, 401);
+  }
+
+  const cloudName = c.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = c.env.CLOUDINARY_API_KEY;
+  const apiSecret = c.env.CLOUDINARY_API_SECRET;
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    return c.json(
+      {
+        success: false,
+        message: 'Cloudinary credentials chưa được cấu hình trên Worker.',
+      },
+      500
+    );
   }
 
   const formData = await c.req.formData().catch(() => null);
@@ -476,7 +562,7 @@ app.post('/api/upload', async (c) => {
     return c.json({ success: false, message: 'Vui lòng chọn một tệp ảnh để tải lên.' }, 400);
   }
 
-  // Validate image type
+  // Validate image
   const allowed = /\.(jpe?g|png|webp|gif|svg)$/i;
   const mimeAllowed = /image\/(jpeg|png|webp|gif|svg\+xml)/i;
   if (!allowed.test(file.name) && !mimeAllowed.test(file.type)) {
@@ -486,43 +572,94 @@ app.post('/api/upload', async (c) => {
     );
   }
 
-  // Validate max size 10MB
+  // Max 10MB
   if (file.size > 10 * 1024 * 1024) {
     return c.json({ success: false, message: 'Kích thước ảnh tối đa là 10MB.' }, 400);
   }
 
-  const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-  const safeName = `img-${Date.now()}-${generateRandomHex(8)}.${ext}`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = 'personal-universe/images';
+  const publicId = `img-${Date.now()}-${generateRandomHex(6)}`;
 
-  await c.env.MEDIA_BUCKET.put(safeName, file.stream(), {
-    httpMetadata: { contentType: file.type || 'image/jpeg' },
-  });
+  const signature = await generateCloudinarySignature(
+    { folder, public_id: publicId, timestamp },
+    apiSecret
+  );
 
+  const uploadForm = new FormData();
+  uploadForm.append('file', file);
+  uploadForm.append('api_key', apiKey);
+  uploadForm.append('timestamp', String(timestamp));
+  uploadForm.append('signature', signature);
+  uploadForm.append('folder', folder);
+  uploadForm.append('public_id', publicId);
+
+  const cloudRes = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    {
+      method: 'POST',
+      body: uploadForm,
+    }
+  );
+
+  if (!cloudRes.ok) {
+    const errorText = await cloudRes.text();
+    console.error('Cloudinary image upload error:', errorText);
+    return c.json({ success: false, message: 'Lỗi khi tải ảnh lên Cloudinary.' }, 502);
+  }
+
+  const cloudData: any = await cloudRes.json();
+  const secureUrl = cloudData.secure_url;
   const now = new Date().toISOString();
+  const safeFilename = publicId;
+
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO media_records (id, filename, content_type, size, uploaded_at) VALUES (?, ?, ?, ?, ?)'
+    `INSERT OR REPLACE INTO media_records 
+     (id, filename, content_type, size, uploaded_at, cloudinary_public_id, cloudinary_url, resource_type) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'image')`
   )
-    .bind(safeName, safeName, file.type || 'image/jpeg', file.size, now)
+    .bind(
+      safeFilename,
+      safeFilename,
+      file.type || 'image/jpeg',
+      file.size,
+      now,
+      cloudData.public_id,
+      secureUrl
+    )
     .run();
 
-  const fileUrl = `/uploads/${safeName}`;
   return c.json({
     success: true,
-    url: fileUrl,
-    filename: safeName,
+    url: secureUrl,
+    filename: cloudData.public_id,
     size: file.size,
     message: 'Tải ảnh lên thành công!',
   });
 });
 
 /**
- * 9. POST /api/upload-audio
- * Tải file nhạc MP3 lên Cloudflare R2
+ * 11. POST /api/upload-audio
+ * Worker-mediated fallback cho tải MP3 lên Cloudinary (resource_type: video)
  */
 app.post('/api/upload-audio', async (c) => {
   const session = await getAuthenticatedSession(c.env.DB, c.req.header('authorization'));
   if (!session.valid) {
     return c.json({ success: false, message: 'Yêu cầu quyền chủ sở hữu.' }, 401);
+  }
+
+  const cloudName = c.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = c.env.CLOUDINARY_API_KEY;
+  const apiSecret = c.env.CLOUDINARY_API_SECRET;
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    return c.json(
+      {
+        success: false,
+        message: 'Cloudinary credentials chưa được cấu hình trên Worker.',
+      },
+      500
+    );
   }
 
   const formData = await c.req.formData().catch(() => null);
@@ -532,7 +669,7 @@ app.post('/api/upload-audio', async (c) => {
     return c.json({ success: false, message: 'Vui lòng chọn một tệp âm thanh MP3 để tải lên.' }, 400);
   }
 
-  // Validate audio format
+  // Validate audio
   const allowedExts = /\.(mp3|wav|ogg|m4a|aac)$/i;
   const allowedMimes = /audio\/(mpeg|mp3|wav|ogg|x-m4a|mp4|aac)/i;
   if (!allowedExts.test(file.name) && !allowedMimes.test(file.type)) {
@@ -542,30 +679,68 @@ app.post('/api/upload-audio', async (c) => {
     );
   }
 
-  // Validate max size 25MB
+  // Max 25MB
   if (file.size > 25 * 1024 * 1024) {
     return c.json({ success: false, message: 'Kích thước tệp âm thanh tối đa là 25MB.' }, 400);
   }
 
-  const ext = file.name.split('.').pop()?.toLowerCase() || 'mp3';
-  const safeName = `audio-${Date.now()}-${generateRandomHex(8)}.${ext}`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = 'personal-universe/audio';
+  const publicId = `audio-${Date.now()}-${generateRandomHex(6)}`;
 
-  await c.env.MEDIA_BUCKET.put(safeName, file.stream(), {
-    httpMetadata: { contentType: file.type || 'audio/mpeg' },
-  });
+  const signature = await generateCloudinarySignature(
+    { folder, public_id: publicId, timestamp },
+    apiSecret
+  );
 
+  const uploadForm = new FormData();
+  uploadForm.append('file', file);
+  uploadForm.append('api_key', apiKey);
+  uploadForm.append('timestamp', String(timestamp));
+  uploadForm.append('signature', signature);
+  uploadForm.append('folder', folder);
+  uploadForm.append('public_id', publicId);
+
+  // Cloudinary: Audio upload yêu cầu resource_type là 'video'
+  const cloudRes = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`,
+    {
+      method: 'POST',
+      body: uploadForm,
+    }
+  );
+
+  if (!cloudRes.ok) {
+    const errorText = await cloudRes.text();
+    console.error('Cloudinary audio upload error:', errorText);
+    return c.json({ success: false, message: 'Lỗi khi tải tệp âm thanh lên Cloudinary.' }, 502);
+  }
+
+  const cloudData: any = await cloudRes.json();
+  const secureUrl = cloudData.secure_url;
   const now = new Date().toISOString();
+  const safeFilename = publicId;
+
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO media_records (id, filename, content_type, size, uploaded_at) VALUES (?, ?, ?, ?, ?)'
+    `INSERT OR REPLACE INTO media_records 
+     (id, filename, content_type, size, uploaded_at, cloudinary_public_id, cloudinary_url, resource_type) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'video')`
   )
-    .bind(safeName, safeName, file.type || 'audio/mpeg', file.size, now)
+    .bind(
+      safeFilename,
+      safeFilename,
+      file.type || 'audio/mpeg',
+      file.size,
+      now,
+      cloudData.public_id,
+      secureUrl
+    )
     .run();
 
-  const fileUrl = `/uploads/${safeName}`;
   return c.json({
     success: true,
-    url: fileUrl,
-    filename: safeName,
+    url: secureUrl,
+    filename: cloudData.public_id,
     originalName: file.name,
     size: file.size,
     message: 'Tải tệp âm thanh lên thành công!',
@@ -573,8 +748,8 @@ app.post('/api/upload-audio', async (c) => {
 });
 
 /**
- * 10. DELETE /api/audio
- * Xóa file nhạc khỏi Cloudflare R2
+ * 12. DELETE /api/audio
+ * Xóa file nhạc an toàn (KHÔNG xóa asset nếu đang được Published sử dụng)
  */
 app.delete('/api/audio', async (c) => {
   const session = await getAuthenticatedSession(c.env.DB, c.req.header('authorization'));
@@ -583,13 +758,73 @@ app.delete('/api/audio', async (c) => {
   }
 
   const body = await c.req.json().catch(() => ({}));
-  const filename = body?.filename;
+  const target = body?.filename || body?.publicId || body?.url;
 
-  if (filename && typeof filename === 'string') {
-    const safeName = filename.split('/').pop()?.trim();
-    if (safeName && !safeName.includes('..')) {
-      await c.env.MEDIA_BUCKET.delete(safeName);
-      await c.env.DB.prepare('DELETE FROM media_records WHERE filename = ?').bind(safeName).run();
+  if (!target || typeof target !== 'string') {
+    return c.json({ success: false, message: 'Thiếu thông tin file âm thanh cần xóa.' }, 400);
+  }
+
+  // 1. Kiểm tra xem file này có đang được dùng trong bản Published không
+  const pubRow = await c.env.DB.prepare(
+    'SELECT data FROM content WHERE key = ?'
+  )
+    .bind('published')
+    .first<{ data: string }>();
+
+  let isReferencedInPublished = false;
+  if (pubRow && pubRow.data) {
+    if (pubRow.data.includes(target)) {
+      isReferencedInPublished = true;
+    }
+  }
+
+  if (isReferencedInPublished) {
+    // Không xóa khỏi Cloudinary để tránh làm hỏng bản đã xuất bản của khách xem!
+    return c.json({
+      success: true,
+      message: 'Tệp nhạc đã được gỡ khỏi bản nháp. Tệp lưu trữ được bảo lưu an toàn trên Cloudinary vì vẫn đang được dùng trong bản đã xuất bản.',
+    });
+  }
+
+  // 2. Nếu không còn dùng trong Published, xóa khỏi Cloudinary và D1
+  const cloudName = c.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = c.env.CLOUDINARY_API_KEY;
+  const apiSecret = c.env.CLOUDINARY_API_SECRET;
+
+  if (cloudName && apiKey && apiSecret) {
+    try {
+      // Tìm public_id từ media_records
+      const rec = await c.env.DB.prepare(
+        'SELECT cloudinary_public_id FROM media_records WHERE filename = ? OR id = ? OR cloudinary_url = ?'
+      )
+        .bind(target, target, target)
+        .first<{ cloudinary_public_id: string }>();
+
+      const publicId = rec?.cloudinary_public_id || target;
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = await generateCloudinarySignature(
+        { public_id: publicId, timestamp },
+        apiSecret
+      );
+
+      const destroyForm = new FormData();
+      destroyForm.append('public_id', publicId);
+      destroyForm.append('api_key', apiKey);
+      destroyForm.append('timestamp', String(timestamp));
+      destroyForm.append('signature', signature);
+
+      await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/video/destroy`, {
+        method: 'POST',
+        body: destroyForm,
+      });
+
+      await c.env.DB.prepare(
+        'DELETE FROM media_records WHERE filename = ? OR id = ? OR cloudinary_public_id = ?'
+      )
+        .bind(target, target, publicId)
+        .run();
+    } catch (err) {
+      console.error('Error destroying Cloudinary asset:', err);
     }
   }
 
